@@ -62,6 +62,8 @@ def test_code(
                 continue
             file_id, file_step = m.group(1), m.group(2)
 
+            if file_id not in json_idx:
+                continue
             code_content = file_path.read_text(encoding='utf-8')
             json_content = scicode_data[json_idx[file_id]]
             step_id = json_content["sub_steps"][int(file_step) - 1]["step_number"]
