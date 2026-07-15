@@ -11,6 +11,7 @@ from scicode.parse.parse import (
     read_from_hf_dataset,
 )
 from scicode.gen.models import extract_python_script, get_model_function
+from scicode.gen.token_records import preload_written_sample_ids
 
 DEFAULT_PROMPT_TEMPLATE = Path("eval", "data", "background_comment_template.txt").read_text()
 BACKGOUND_PROMPT_TEMPLATE = Path("eval", "data", "multistep_template.txt").read_text()
@@ -20,7 +21,8 @@ class Gencode:
     def __init__(self, model: str, output_dir: Path,
                  prompt_dir: Path, with_background: bool, temperature: float,
                  api_key: str = "", base_url: str | None = None, max_tokens: int = 4096,
-                 timeout: float = 3600.0, repetition_penalty: float | None = None):
+                 timeout: float = 3600.0, repetition_penalty: float | None = None,
+                 stream: bool = False):
         self.model = model
         self.output_dir = output_dir
         self.prompt_dir = prompt_dir
@@ -31,6 +33,7 @@ class Gencode:
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.repetition_penalty = repetition_penalty
+        self.stream = stream
         self.previous_llm_code = []
 
     def _get_background_dir(self):
@@ -133,8 +136,10 @@ class Gencode:
             temperature=self.temperature,
             timeout=self.timeout,
             repetition_penalty=self.repetition_penalty,
+            stream=self.stream,
         )
-        response_from_llm = model_fct(prompt)
+        # sample_id 用于 reuse 场景下按 id 去重 token records；与落盘 .py 文件名对齐
+        response_from_llm = model_fct(prompt, sample_id=f"{prob_id}.{num_steps}")
         self.save_step_generation_log(prob_data, num_steps, tot_steps, prompt, response_from_llm)
         self.previous_llm_code[num_steps - 1] = extract_python_script(response_from_llm)
         self.save_response_with_steps(prob_data, response_from_llm, previous_code, num_steps)
@@ -201,6 +206,8 @@ def get_cli() -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, default=0, help="Generation temperature")
     parser.add_argument("--repetition-penalty", type=float, default=None,
                         help="Repetition penalty (for vLLM / Bailian backends)")
+    parser.add_argument("--stream", action="store_true",
+                        help="Use streaming responses from the OpenAI-compatible API")
     parser.add_argument("--num-workers", type=int, default=8,
                         help="Number of parallel workers (one per problem)")
     parser.add_argument("--timeout", type=float, default=180.0,
@@ -235,11 +242,18 @@ def main(model: str,
          max_tokens: int = 4096,
          num_workers: int = 8,
          timeout: float = 3600.0,
+         stream: bool = False,
 ) -> None:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if output_dir is None:
         output_dir = Path("eval_results", f"{timestamp}_{split}")
     print(f'Output directory: {output_dir}')
+
+    # 预加载 token_records 中已写入的 sample_id，防止 reuse 补跑时重复写入
+    # ThreadPoolExecutor 全线程共享同一份 set，只需在此调用一次
+    n_preloaded = preload_written_sample_ids()
+    if n_preloaded > 0:
+        print(f'Preloaded {n_preloaded} sample_ids from existing token_records (reuse dedup)')
 
     prompt_template = BACKGOUND_PROMPT_TEMPLATE if with_background else DEFAULT_PROMPT_TEMPLATE
     data = read_from_hf_dataset(split)
@@ -255,6 +269,7 @@ def main(model: str,
             prompt_dir=prompt_dir, with_background=with_background, temperature=temperature,
             api_key=api_key, base_url=base_url, max_tokens=max_tokens,
             timeout=timeout, repetition_penalty=repetition_penalty,
+            stream=stream,
         )
 
     with ThreadPoolExecutor(max_workers=min(num_workers, len(data))) as executor:
