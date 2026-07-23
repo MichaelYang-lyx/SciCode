@@ -77,10 +77,18 @@ def compute_tokens(usage, text=None, reasoning_text=None):
 
     if usage is not None:
         input_tokens = _get(usage, "prompt_tokens")
+        if input_tokens is None:
+            input_tokens = _get(usage, "input_tokens")
         completion_tokens = _get(usage, "completion_tokens")
+        if completion_tokens is None:
+            completion_tokens = _get(usage, "output_tokens")
         reasoning_tokens = _get(usage, "reasoning_tokens")
         if reasoning_tokens is None:
             details = _get(usage, "completion_tokens_details")
+            if details is not None:
+                reasoning_tokens = _get(details, "reasoning_tokens")
+        if reasoning_tokens is None:
+            details = _get(usage, "output_tokens_details")
             if details is not None:
                 reasoning_tokens = _get(details, "reasoning_tokens")
 

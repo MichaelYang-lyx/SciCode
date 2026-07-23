@@ -1,4 +1,6 @@
 import argparse
+import json
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -22,7 +24,8 @@ class Gencode:
                  prompt_dir: Path, with_background: bool, temperature: float,
                  api_key: str = "", base_url: str | None = None, max_tokens: int = 4096,
                  timeout: float = 3600.0, repetition_penalty: float | None = None,
-                 stream: bool = False):
+                 stream: bool = False, api_type: str = "chat_completions",
+                 extra_body: dict | None = None):
         self.model = model
         self.output_dir = output_dir
         self.prompt_dir = prompt_dir
@@ -34,6 +37,8 @@ class Gencode:
         self.timeout = timeout
         self.repetition_penalty = repetition_penalty
         self.stream = stream
+        self.api_type = api_type
+        self.extra_body = extra_body
         self.previous_llm_code = []
 
     def _get_background_dir(self):
@@ -137,6 +142,8 @@ class Gencode:
             timeout=self.timeout,
             repetition_penalty=self.repetition_penalty,
             stream=self.stream,
+            api_type=self.api_type,
+            extra_body=self.extra_body,
         )
         # sample_id 用于 reuse 场景下按 id 去重 token records；与落盘 .py 文件名对齐
         response_from_llm = model_fct(prompt, sample_id=f"{prob_id}.{num_steps}")
@@ -188,7 +195,7 @@ class Gencode:
 def get_cli() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=str, default="gpt-4o", help="Model name")
-    parser.add_argument("--api-key", type=str, default="", help="API key")
+    parser.add_argument("--api-key", type=str, default=os.getenv("MODEL_API_KEY", ""), help="API key")
     parser.add_argument("--base-url", type=str, default=None,
                         help="Base URL for OpenAI-compatible endpoint")
     parser.add_argument("--max-tokens", type=int, default=4096,
@@ -208,6 +215,11 @@ def get_cli() -> argparse.ArgumentParser:
                         help="Repetition penalty (for vLLM / Bailian backends)")
     parser.add_argument("--stream", action="store_true",
                         help="Use streaming responses from the OpenAI-compatible API")
+    parser.add_argument("--api-type", type=str, default="chat_completions",
+                        choices=["chat_completions", "responses"],
+                        help="OpenAI API type")
+    parser.add_argument("--extra-body", type=str, default=None,
+                        help="JSON object merged into the API request body")
     parser.add_argument("--num-workers", type=int, default=8,
                         help="Number of parallel workers (one per problem)")
     parser.add_argument("--timeout", type=float, default=180.0,
@@ -243,6 +255,8 @@ def main(model: str,
          num_workers: int = 8,
          timeout: float = 3600.0,
          stream: bool = False,
+         api_type: str = "chat_completions",
+         extra_body: str | None = None,
 ) -> None:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if output_dir is None:
@@ -254,6 +268,8 @@ def main(model: str,
     n_preloaded = preload_written_sample_ids()
     if n_preloaded > 0:
         print(f'Preloaded {n_preloaded} sample_ids from existing token_records (reuse dedup)')
+
+    parsed_extra_body = json.loads(extra_body) if extra_body else None
 
     prompt_template = BACKGOUND_PROMPT_TEMPLATE if with_background else DEFAULT_PROMPT_TEMPLATE
     data = read_from_hf_dataset(split)
@@ -269,7 +285,7 @@ def main(model: str,
             prompt_dir=prompt_dir, with_background=with_background, temperature=temperature,
             api_key=api_key, base_url=base_url, max_tokens=max_tokens,
             timeout=timeout, repetition_penalty=repetition_penalty,
-            stream=stream,
+            stream=stream, api_type=api_type, extra_body=parsed_extra_body,
         )
 
     with ThreadPoolExecutor(max_workers=min(num_workers, len(data))) as executor:
