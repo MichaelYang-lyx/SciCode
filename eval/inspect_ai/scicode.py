@@ -7,7 +7,7 @@ from pathlib import Path
 from inspect_ai import Task, task
 from inspect_ai.dataset import Sample, hf_dataset
 from inspect_ai.solver import solver, TaskState, Generate
-from inspect_ai.scorer import scorer, mean, metric, Metric, Score, Target
+from inspect_ai.scorer import scorer, mean, metric, Metric, SampleScore, Target
 from scicode.parse.parse import extract_function_name, get_function_from_code
 from scicode.gen.models import generate_dummy_response, extract_python_script
 
@@ -344,7 +344,6 @@ def scicode_solver(**params: dict[str, Any]):
                     response_from_llm = result.output.completion
                     # ===Model Generation===
                 except:
-                    print(f"Failed to generate response for problem {prob_id} step {idx+1}.")
                     response_from_llm = generate_dummy_response(prompt)
             prompt_assistant.register_previous_response(
                 prob_data=state.metadata,
@@ -357,12 +356,12 @@ def scicode_solver(**params: dict[str, Any]):
 
 @metric
 def sub_problem_correctness() -> Metric:
-    def metric(scores: list[Score]) -> int | float:
+    def metric(scores: list[SampleScore]) -> int | float:
         total_correct = 0
         total_steps = 0
         for score in scores:
-            total_correct += score.value["Total Correct"]
-            total_steps += score.value["Total Steps"]
+            total_correct += score.score.value["Total Correct"]
+            total_steps += score.score.value["Total Steps"]
         return total_correct / total_steps
     return metric
 
