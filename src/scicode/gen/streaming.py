@@ -1,6 +1,21 @@
 """将 SDK 流式事件合成为原生响应对象。"""
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_stream_preference = ContextVar("scicode_stream_preference", default=False)
+
+
+@contextmanager
+def streaming_preference(enabled: bool):
+    """按异步调用隔离开关，避免共享客户端的设置互相影响。"""
+    token = _stream_preference.set(enabled)
+    try:
+        yield
+    finally:
+        _stream_preference.reset(token)
+
 
 def _install(resource, final_method, *, usage=False):
     if getattr(resource, "_scicode_streaming", False):
@@ -9,7 +24,7 @@ def _install(resource, final_method, *, usage=False):
 
     async def create(*args, **kwargs):
         # SDK 流管理器可能再次调用 create(stream=True)。
-        if kwargs.get("stream") is True:
+        if not _stream_preference.get() or kwargs.get("stream") is True:
             return await original(*args, **kwargs)
         request = dict(kwargs)
         request.pop("stream", None)
@@ -44,3 +59,4 @@ def enable_streaming(model):
         _install(client.messages, "get_final_message")
     else:
         raise ValueError("The selected provider has no supported streaming client")
+    _stream_preference.set(True)

@@ -9,7 +9,7 @@ from inspect_ai.dataset import Sample, hf_dataset
 from inspect_ai.solver import solver, TaskState, Generate
 from inspect_ai.model import get_model
 from inspect_ai.scorer import scorer, mean, metric, Metric, SampleScore, Score, Target
-from scicode.gen.streaming import enable_streaming
+from scicode.gen.streaming import enable_streaming, streaming_preference
 from scicode.parse.parse import extract_function_name, get_function_from_code
 from scicode.gen.models import generate_dummy_response, extract_python_script
 
@@ -311,8 +311,10 @@ def generate_gold_response(prob_data: dict, num_steps: int):
 @solver
 def scicode_solver(**params: dict[str, Any]):
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        if params.get("stream", True) and params["mode"] == "normal":
+        stream_enabled = params.get("stream", False) is True and params["mode"] == "normal"
+        if stream_enabled:
             enable_streaming(get_model())
+        state.metadata["scicode_streaming"] = stream_enabled
         model_name = str(state.model).replace("/", "-")
         prompt_assistant = ScicodePromptingAssistant(
             output_dir=Path(params["output_dir"], model_name, "generated_code"),
@@ -344,7 +346,8 @@ def scicode_solver(**params: dict[str, Any]):
                     # ===Model Generation===
                     state.user_prompt.text = prompt
                     state_copy = copy.deepcopy(state)
-                    result = await generate(state=state_copy)
+                    with streaming_preference(stream_enabled):
+                        result = await generate(state=state_copy)
                     response_from_llm = result.output.completion
                     # ===Model Generation===
                 except Exception as exc:
@@ -407,7 +410,7 @@ def scicode(
     with_background: bool = False,
     h5py_file: str = '../data/test_data.h5',
     mode: str = 'normal',
-    stream: bool = True,
+    stream: bool = False,
     stop_on_generation_error: bool = False,
 ):
     

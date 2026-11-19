@@ -84,7 +84,7 @@ def test_strict_task_stops_without_scoring_failed_sample(native, monkeypatch, tm
     assert log.status == "error"
 
 
-@pytest.mark.parametrize("stream", [True, False])
+@pytest.mark.parametrize("stream", [True, False, None])
 def test_solver_stream_option_controls_setup(native, monkeypatch, tmp_path, stream):
     from inspect_ai.model import ChatMessageUser, ModelName
     from inspect_ai.solver import TaskState
@@ -97,7 +97,9 @@ def test_solver_stream_option_controls_setup(native, monkeypatch, tmp_path, stre
     calls = []
     monkeypatch.setattr(native, "get_model", lambda: "model")
     monkeypatch.setattr(native, "enable_streaming", lambda model: calls.append(model))
+    options = {} if stream is None else {"stream": stream}
     solve = native.scicode_solver(output_dir=str(tmp_path), with_background=False,
-                                  mode="normal", stream=stream)
+                                  mode="normal", **options)
     asyncio.run(solve(state, None))
     assert calls == (["model"] if stream else [])
+    assert state.metadata["scicode_streaming"] is bool(stream)
