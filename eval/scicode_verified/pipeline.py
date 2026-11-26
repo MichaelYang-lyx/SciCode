@@ -105,9 +105,10 @@ def generation_compatible(old: dict[str, Any], new: dict[str, Any]) -> bool:
     return (isinstance(old, dict) and isinstance(new, dict)
             and {k: v for k, v in old.items() if k not in {"max_tokens", "stop_on_api_error", "api_timeout_seconds", "workers_per_round"}}
             == {k: v for k, v in new.items() if k not in {"max_tokens", "stop_on_api_error", "api_timeout_seconds", "workers_per_round"}}
-            and isinstance(old.get("max_tokens"), int)
-            and isinstance(new.get("max_tokens"), int)
-            and old["max_tokens"] <= new["max_tokens"])
+            and ((old.get("max_tokens") is None and new.get("max_tokens") is None)
+                 or (isinstance(old.get("max_tokens"), int)
+                     and isinstance(new.get("max_tokens"), int)
+                     and old["max_tokens"] <= new["max_tokens"])))
 
 
 def verify_config(config: dict[str, Any]) -> None:
@@ -269,7 +270,9 @@ def generate(config: dict[str, Any], prompt: str) -> dict[str, Any]:
         extra["output_config"] = output_config
     token_field = gen.get("token_field", "max_tokens")
     body: dict[str, Any] = {"model": model["name"], "messages": [{"role": "user", "content": prompt}],
-                            token_field: gen["max_tokens"], "stream": gen["stream"], **extra}
+                            "stream": gen["stream"], **extra}
+    if gen["max_tokens"] is not None or model["protocol"] == "anthropic":
+        body[token_field] = gen["max_tokens"]
     if gen["temperature"] is not None:
         body["temperature"] = gen["temperature"]
     headers = {"Content-Type": "application/json"}
@@ -725,15 +728,8 @@ def main() -> None:
                 raise InfrastructureError(f"Resume configuration differs: {key}")
         old_model, new_model = old["model"], config["model"]
         if old_model != new_model:
-            allowed = (old_model.get("name"), new_model.get("name")) in {("glm-5.3-flash/tencent/sfb", "glm-5.3-flash/zai/zai"), ("bailian/glm-5.2", "tencent/glm-5.2")}
-            same_other = {k:v for k,v in old_model.items() if k != "name"} == {k:v for k,v in new_model.items() if k != "name"}
-            info = config.get("continuation") or {}
-            if not (allowed and same_other and info.get("source") == str(source) and info.get("old_model") == old_model["name"] and info.get("new_model") == new_model["name"]):
-                raise InfrastructureError("Resume model channel change not authorized or recorded")
+            raise InfrastructureError("Resume model configuration differs")
         config["_resume_model"] = old_model["name"]
-        config["_allowed_resume_models"] = [old_model["name"], new_model["name"]]
-        if old_model["name"] == new_model["name"] == "tencent/glm-5.2" and (config.get("continuation") or {}).get("allow_existing_bailian_records") is True:
-            config["_allowed_resume_models"].append("bailian/glm-5.2")
         if old.get("generation") != config.get("generation"):
             old_gen, new_gen = old["generation"], config["generation"]
             if not generation_compatible(old_gen, new_gen):
@@ -794,7 +790,7 @@ def main() -> None:
             atomic_json(output / "final-summary.json", {"status": "incomplete", "metrics": {},
                         "error_stats": {"incomplete_rounds": len(incomplete)}, "details": {"incomplete": incomplete}})
             print("Incomplete after one retry; no official score", flush=True)
-            return
+            raise SystemExit(1)
         summary = make_summary(config, rounds)
         atomic_json(output / "final-summary.json", summary)
         print(json.dumps(summary["metrics"], ensure_ascii=False), flush=True)

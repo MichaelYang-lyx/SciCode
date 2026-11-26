@@ -18,7 +18,12 @@ def main():
     parser.add_argument('--base-url', required=True)
     parser.add_argument('--protocol', choices=['openai_chat', 'anthropic'], default='openai_chat')
     parser.add_argument('--api-key-env', default='SCICODE_VERIFIED_API_KEY')
-    parser.add_argument('--max-tokens', type=int, default=65536)
+    budget = parser.add_mutually_exclusive_group()
+    budget.add_argument('--max-tokens', type=int, default=65536)
+    budget.add_argument('--use-provider-output-budget', action='store_true')
+    parser.add_argument('--reasoning-effort')
+    parser.add_argument('--temperature', type=float)
+    parser.add_argument('--top-p', type=float)
     parser.add_argument('--workers', type=int, default=1)
     parser.add_argument('--grading-workers', type=int, default=1)
     parser.add_argument('--cpu-slots', type=int, default=1)
@@ -30,6 +35,8 @@ def main():
     parser.add_argument('--without-background', action='store_true')
     parser.add_argument('--non-stream', action='store_true')
     args = parser.parse_args()
+    if args.use_provider_output_budget and args.protocol == 'anthropic':
+        parser.error('Anthropic requires an explicit output budget')
     if not os.environ.get(args.api_key_env):
         parser.error('API key environment variable is missing')
     if min(args.max_tokens, args.workers, args.grading_workers, args.cpu_slots,
@@ -44,8 +51,9 @@ def main():
         'output': str(output),
         'model': {'name': args.model, 'base_url': args.base_url, 'protocol': args.protocol,
                   'api_key_env': args.api_key_env},
-        'generation': {'max_tokens': args.max_tokens, 'temperature': None, 'top_p': None,
-                       'top_k': None, 'reasoning_effort': None, 'token_field': 'max_tokens',
+        'generation': {'max_tokens': None if args.use_provider_output_budget else args.max_tokens,
+                       'temperature': args.temperature, 'top_p': args.top_p,
+                       'top_k': None, 'reasoning_effort': args.reasoning_effort, 'token_field': 'max_tokens',
                        'strict_effort': True, 'stop_on_api_error': False, 'extra_body': {},
                        'workers_per_round': args.workers, 'api_timeout_seconds': args.api_timeout,
                        'stream': not args.non_stream},
